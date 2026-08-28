@@ -152,6 +152,7 @@
 <div id="timeDisplay">25:00</div>
 <canvas id="c"></canvas>
 <div class="duration-btns">
+  <button class="dur"        onclick="setDurationSecs(5, this)">5s</button>
   <button class="dur active" onclick="setDuration(25, this)">25m</button>
   <button class="dur"        onclick="setDuration(30, this)">30m</button>
   <button class="dur"        onclick="setDuration(45, this)">45m</button>
@@ -184,7 +185,6 @@
   let running   = false;
   let lastTs    = null;
   let rafId     = null;
-  let chimeUrl  = null;  // blob URL of pre-rendered chime WAV
 
   // ── sizing ────────────────────────────────────────────────────────────────
 
@@ -331,9 +331,20 @@
     } else {
       running = true;
       startBtn.textContent = 'Pause';
-      if (!chimeUrl) renderChime();
       rafId = requestAnimationFrame(step);
     }
+  }
+
+  function setDurationSecs(secs, btn) {
+    document.querySelectorAll('.dur').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    running = false;
+    lastTs  = null;
+    cancelAnimationFrame(rafId);
+    total     = secs;
+    remaining = total;
+    startBtn.textContent = 'Start';
+    draw();
   }
 
   function setDuration(mins, btn) {
@@ -428,64 +439,31 @@
   }, { passive: false });
   canvas.addEventListener('touchend', () => { dragging = false; });
 
-  // Pre-render the chime to a WAV blob so it can play via <audio> in background tabs
-  function renderChime() {
-    try {
-      const sampleRate = 44100;
-      const duration   = 0.85;
-      const len        = Math.ceil(sampleRate * duration);
-      const buf        = new Float32Array(len);
-      const notes = [
-        { freq: 523.25,  start: 0.00, dur: 0.10 },
-        { freq: 659.25,  start: 0.09, dur: 0.10 },
-        { freq: 783.99,  start: 0.18, dur: 0.10 },
-        { freq: 1046.5,  start: 0.27, dur: 0.55 },
-        { freq: 1318.5,  start: 0.30, dur: 0.50 },
-        { freq: 1567.98, start: 0.33, dur: 0.45 },
-      ];
-      for (const { freq, start, dur } of notes) {
-        const s0 = Math.floor(start * sampleRate);
-        const s1 = Math.floor((start + dur) * sampleRate);
-        for (let i = s0; i < s1 && i < len; i++) {
-          const t    = (i - s0) / sampleRate;
-          const env  = t < 0.02 ? t / 0.02 : Math.exp(-6 * (t - 0.02) / dur);
-          // triangle wave
-          const phase = (freq * (i / sampleRate)) % 1;
-          const tri   = 4 * Math.abs(phase - 0.5) - 1;
-          buf[i] += tri * env * 0.22;
-        }
-      }
-      // Encode as 16-bit PCM WAV
-      const numSamples = buf.length;
-      const wavBuf     = new ArrayBuffer(44 + numSamples * 2);
-      const view       = new DataView(wavBuf);
-      const writeStr   = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
-      writeStr(0, 'RIFF');
-      view.setUint32(4, 36 + numSamples * 2, true);
-      writeStr(8, 'WAVE');
-      writeStr(12, 'fmt ');
-      view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);
-      view.setUint16(22, 1, true);
-      view.setUint32(24, sampleRate, true);
-      view.setUint32(28, sampleRate * 2, true);
-      view.setUint16(32, 2, true);
-      view.setUint16(34, 16, true);
-      writeStr(36, 'data');
-      view.setUint32(40, numSamples * 2, true);
-      for (let i = 0; i < numSamples; i++) {
-        const s = Math.max(-1, Math.min(1, buf[i]));
-        view.setInt16(44 + i * 2, s * 0x7FFF, true);
-      }
-      chimeUrl = URL.createObjectURL(new Blob([wavBuf], { type: 'audio/wav' }));
-    } catch (_) {}
-  }
-
   function beep() {
     try {
-      if (!chimeUrl) renderChime();
-      const audio = new Audio(chimeUrl);
-      audio.play();
+      const ac = new AudioContext();
+      // Playful tada: quick triplet run-up then a bright held chord
+      const notes = [
+        { freq: 523.25,  start: 0.00, dur: 0.10 },  // C5
+        { freq: 659.25,  start: 0.09, dur: 0.10 },  // E5
+        { freq: 783.99,  start: 0.18, dur: 0.10 },  // G5
+        { freq: 1046.5,  start: 0.27, dur: 0.55 },  // C6 (held)
+        { freq: 1318.5,  start: 0.30, dur: 0.50 },  // E6 (chord layer)
+        { freq: 1567.98, start: 0.33, dur: 0.45 },  // G6 (chord layer)
+      ];
+      notes.forEach(({ freq, start, dur }) => {
+        const osc  = ac.createOscillator();
+        const gain = ac.createGain();
+        osc.connect(gain);
+        gain.connect(ac.destination);
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0, ac.currentTime + start);
+        gain.gain.linearRampToValueAtTime(0.22, ac.currentTime + start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + start + dur);
+        osc.start(ac.currentTime + start);
+        osc.stop(ac.currentTime + start + dur);
+      });
     } catch (_) {}
   }
 
