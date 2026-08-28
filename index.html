@@ -553,7 +553,8 @@
     }
     // Show notification (works even in background tabs)
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-      new Notification('Pomodoro', { body: 'Time is up!', icon: 'icon.svg' });
+      const t = total >= 60 ? (total / 60) + ' min' : total + 's';
+      new Notification('Pomodoro', { body: t + ' is up!', icon: 'icon.svg' });
     }
   }
 
